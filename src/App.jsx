@@ -80,7 +80,7 @@ const todayStr = () => new Date().toISOString().split("T")[0];
 // Map DB snake_case to app camelCase
 const mapCustomer = (c) => ({ id: c.id, name: c.name, phone: c.phone, email: c.email, address: c.address, createdAt: c.created_at });
 const mapVehicle = (v) => ({ id: v.id, customerId: v.customer_id, year: v.year, make: v.make, model: v.model, vin: v.vin, color: v.color, notes: v.notes });
-const mapWorkOrder = (w) => ({ id: w.id, vehicleId: w.vehicle_id, date: w.date, services: w.services, partsCost: w.parts_cost, laborCost: w.labor_cost, total: w.total, deposit: w.deposit, status: w.status, notes: w.notes });
+const mapWorkOrder = (w) => ({ id: w.id, woNumber: w.wo_number || '', vehicleId: w.vehicle_id, date: w.date, services: w.services, partsCost: w.parts_cost, laborCost: w.labor_cost, total: w.total, deposit: w.deposit, status: w.status, notes: w.notes });
 
 // ── Toast Component ──
 const Toast = ({ toasts }) => (
@@ -211,7 +211,7 @@ const InvoiceView = ({ workOrder, customer, vehicle, onClose }) => {
           </div>
           <div style={{ textAlign: "right" }}>
             <p style={{ fontSize: "12px", color: "#999", textTransform: "uppercase", letterSpacing: "1px" }}>Invoice</p>
-            <p style={{ fontFamily: fonts.mono, fontWeight: 600, fontSize: "15px" }}>WO-{workOrder.id}</p>
+            <p style={{ fontFamily: fonts.mono, fontWeight: 600, fontSize: "15px" }}>{workOrder.woNumber || `WO-${workOrder.id}`}</p>
             <p style={{ fontSize: "13px", color: "#666" }}>{formatDate(workOrder.date)}</p>
           </div>
         </div>
@@ -289,9 +289,10 @@ export default function MCSApp() {
   const [custForm, setCustForm] = useState({ name: "", phone: "", email: "", address: "" });
   const [vehForm, setVehForm] = useState({ customerId: "", year: "", make: "", model: "", vin: "", color: "", notes: "" });
   const [woForm, setWoForm] = useState({
-    vehicleId: "", date: todayStr(), services: "", partsCost: "",
+    vehicleId: "", woNumber: "", date: todayStr(), services: "", partsCost: "",
     laborCost: "", total: "", deposit: "", status: "pending", notes: "",
   });
+  const [editingWO, setEditingWO] = useState(null);
 
   // Toast helper
   const addToast = useCallback((message, type = "success") => {
@@ -375,19 +376,57 @@ export default function MCSApp() {
       const result = await sbFetch("work_orders", {
         method: "POST",
         body: {
-          vehicle_id: parseInt(woForm.vehicleId), date: woForm.date, services: woForm.services,
+          vehicle_id: parseInt(woForm.vehicleId), wo_number: woForm.woNumber, date: woForm.date, services: woForm.services,
           parts_cost: parseFloat(woForm.partsCost) || 0, labor_cost: parseFloat(woForm.laborCost) || 0,
           total: parseFloat(woForm.total) || 0, deposit: parseFloat(woForm.deposit) || 0,
           status: woForm.status, notes: woForm.notes,
         },
       });
       setWorkOrders((prev) => [mapWorkOrder(result[0]), ...prev]);
-      setWoForm({ vehicleId: "", date: todayStr(), services: "", partsCost: "", laborCost: "", total: "", deposit: "", status: "pending", notes: "" });
+      setWoForm({ vehicleId: "", woNumber: "", date: todayStr(), services: "", partsCost: "", laborCost: "", total: "", deposit: "", status: "pending", notes: "" });
       setModal(null);
-      addToast(`Work order WO-${result[0].id} created`);
+      addToast(`Work order ${woForm.woNumber || 'WO-' + result[0].id} created`);
     } catch (e) {
       addToast("Failed to create work order: " + e.message, "error");
     }
+  };
+
+  const editWorkOrder = async () => {
+    if (!editingWO) return;
+    try {
+      await sbFetch("work_orders", {
+        method: "PATCH",
+        query: `?id=eq.${editingWO.id}`,
+        body: {
+          wo_number: woForm.woNumber, date: woForm.date, services: woForm.services,
+          parts_cost: parseFloat(woForm.partsCost) || 0, labor_cost: parseFloat(woForm.laborCost) || 0,
+          total: parseFloat(woForm.total) || 0, deposit: parseFloat(woForm.deposit) || 0,
+          status: woForm.status, notes: woForm.notes,
+        },
+      });
+      setWorkOrders((prev) => prev.map((wo) => wo.id === editingWO.id ? {
+        ...wo, woNumber: woForm.woNumber, date: woForm.date, services: woForm.services,
+        partsCost: parseFloat(woForm.partsCost) || 0, laborCost: parseFloat(woForm.laborCost) || 0,
+        total: parseFloat(woForm.total) || 0, deposit: parseFloat(woForm.deposit) || 0,
+        status: woForm.status, notes: woForm.notes,
+      } : wo));
+      setEditingWO(null);
+      setWoForm({ vehicleId: "", woNumber: "", date: todayStr(), services: "", partsCost: "", laborCost: "", total: "", deposit: "", status: "pending", notes: "" });
+      setModal(null);
+      addToast(`Work order ${woForm.woNumber || 'WO-' + editingWO.id} updated`);
+    } catch (e) {
+      addToast("Failed to update work order: " + e.message, "error");
+    }
+  };
+
+  const openEditWO = (wo) => {
+    setEditingWO(wo);
+    setWoForm({
+      vehicleId: String(wo.vehicleId), woNumber: wo.woNumber || '', date: wo.date || todayStr(),
+      services: wo.services || '', partsCost: String(wo.partsCost || ''), laborCost: String(wo.laborCost || ''),
+      total: String(wo.total || ''), deposit: String(wo.deposit || ''), status: wo.status || 'pending', notes: wo.notes || '',
+    });
+    setModal("workOrder");
   };
 
   const updateWOStatus = async (woId, status) => {
@@ -535,7 +574,7 @@ export default function MCSApp() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <span style={{ fontFamily: fonts.mono, fontSize: "13px", fontWeight: 600, color: theme.text }}>WO-{wo.id}</span>
+                      <span style={{ fontFamily: fonts.mono, fontSize: "13px", fontWeight: 600, color: theme.text }}>{wo.woNumber || `WO-${wo.id}`}</span>
                       <Badge color={statusColors[wo.status]}>{wo.status}</Badge>
                     </div>
                     <p style={{ fontSize: "14px", color: theme.text, marginTop: "6px" }}>{wo.services || "—"}</p>
@@ -551,6 +590,7 @@ export default function MCSApp() {
                 <div style={{ display: "flex", gap: "6px", marginTop: "12px", flexWrap: "wrap" }}>
                   {wo.status !== "completed" && <Button size="sm" variant="ghost" onClick={() => updateWOStatus(wo.id, "completed")}>✓ Complete</Button>}
                   {wo.status === "pending" && <Button size="sm" variant="ghost" onClick={() => updateWOStatus(wo.id, "in-progress")}>▶ Start</Button>}
+                  <Button size="sm" variant="ghost" onClick={() => openEditWO(wo)}>✏ Edit</Button>
                   <Button size="sm" variant="ghost" onClick={() => setInvoiceWO(wo)}>📄 Invoice</Button>
                   <Button size="sm" variant="ghost" onClick={() => deleteWorkOrder(wo.id)} style={{ color: theme.danger }}>✕ Delete</Button>
                 </div>
@@ -631,7 +671,7 @@ export default function MCSApp() {
                     }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ fontFamily: fonts.mono, fontSize: "12px", color: theme.textDim }}>WO-{wo.id}</span>
+                        <span style={{ fontFamily: fonts.mono, fontSize: "12px", color: theme.textDim }}>{wo.woNumber || `WO-${wo.id}`}</span>
                         <span style={{ margin: "0 8px", color: theme.textMuted }}>·</span>
                         <span style={{ fontSize: "13px", color: theme.text }}>{wo.services || "Service"}</span>
                         {cust && <span style={{ fontSize: "12px", color: theme.textDim, marginLeft: "10px" }}>— {cust.name}</span>}
@@ -728,12 +768,15 @@ export default function MCSApp() {
       )}
 
       {modal === "workOrder" && (
-        <Modal title="New Work Order" onClose={() => setModal(null)}>
-          <Input label="Vehicle" value={woForm.vehicleId} onChange={(v) => setWoForm({ ...woForm, vehicleId: v })} required
-            options={[{ value: "", label: "Select vehicle..." }, ...vehicles.map((v) => {
-              const c = getCustomer(v.customerId);
-              return { value: String(v.id), label: `${v.year} ${v.make} ${v.model} — ${c?.name || ""}` };
-            })]} />
+        <Modal title={editingWO ? "Edit Work Order" : "New Work Order"} onClose={() => { setModal(null); setEditingWO(null); setWoForm({ vehicleId: "", woNumber: "", date: todayStr(), services: "", partsCost: "", laborCost: "", total: "", deposit: "", status: "pending", notes: "" }); }}>
+          {!editingWO && (
+            <Input label="Vehicle" value={woForm.vehicleId} onChange={(v) => setWoForm({ ...woForm, vehicleId: v })} required
+              options={[{ value: "", label: "Select vehicle..." }, ...vehicles.map((v) => {
+                const c = getCustomer(v.customerId);
+                return { value: String(v.id), label: `${v.year} ${v.make} ${v.model} — ${c?.name || ""}` };
+              })]} />
+          )}
+          <Input label="WO Number" value={woForm.woNumber} onChange={(v) => setWoForm({ ...woForm, woNumber: v })} placeholder="e.g. WO-0001 (optional)" />
           <Input label="Date" value={woForm.date} onChange={(v) => setWoForm({ ...woForm, date: v })} type="date" />
           <Input label="Services Performed" value={woForm.services} onChange={(v) => setWoForm({ ...woForm, services: v })} textarea required placeholder="Rear brake pads & rotors replacement" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
@@ -748,8 +791,12 @@ export default function MCSApp() {
             options={[{ value: "pending", label: "Pending" }, { value: "in-progress", label: "In Progress" }, { value: "completed", label: "Completed" }]} />
           <Input label="Notes" value={woForm.notes} onChange={(v) => setWoForm({ ...woForm, notes: v })} textarea placeholder="20% markup on parts, $75 deposit collected" />
           <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
-            <Button variant="secondary" onClick={() => setModal(null)}>Cancel</Button>
-            <Button onClick={addWorkOrder} disabled={!woForm.vehicleId}>Create Work Order</Button>
+            <Button variant="secondary" onClick={() => { setModal(null); setEditingWO(null); setWoForm({ vehicleId: "", woNumber: "", date: todayStr(), services: "", partsCost: "", laborCost: "", total: "", deposit: "", status: "pending", notes: "" }); }}>Cancel</Button>
+            {editingWO ? (
+              <Button onClick={editWorkOrder}>Save Changes</Button>
+            ) : (
+              <Button onClick={addWorkOrder} disabled={!woForm.vehicleId}>Create Work Order</Button>
+            )}
           </div>
         </Modal>
       )}
